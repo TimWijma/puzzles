@@ -26,7 +26,7 @@ import {
   saveSudokuProgress,
   sudokuProgressKey,
 } from '../src/puzzles/sudoku/persistence'
-import type { StorageLike } from '../src/puzzles/sudoku/persistenceTypes'
+import type { StorageLike } from '../src/puzzles/persistence'
 
 const puzzleRows = [
   '530070000',

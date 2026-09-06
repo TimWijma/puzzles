@@ -1,5 +1,5 @@
-import type { StorageLike } from './persistenceTypes'
-import { createInitialSudokuState, isSudokuDigit } from './state'
+import type { StorageLike } from '../persistence'
+import { isSudokuDigit } from './state'
 import type { SudokuCell, SudokuPlayerState, SudokuPuzzleInstance } from './types'
 
 interface StoredSudokuProgress {
@@ -80,8 +80,4 @@ export function clearSudokuProgress(storage: StorageLike, seed: string): void {
   } catch {
     // Reset still works in memory when storage is unavailable.
   }
-}
-
-export function emptySudokuProgress(instance: SudokuPuzzleInstance): SudokuPlayerState {
-  return createInitialSudokuState(instance)
 }

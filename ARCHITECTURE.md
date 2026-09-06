@@ -48,12 +48,12 @@ Seeds are identifiers such as `abc123` or `sudoku-492810` and carry no date sema
 
 ## Adding a puzzle
 
-The Sudoku module demonstrates the intended structure:
+The Sudoku and Queens modules demonstrate the intended structure:
 
 ```text
-src/puzzles/sudoku/
+src/puzzles/<puzzle-name>/
   types.ts
-  validator.ts
+  validator.ts (and region helpers where applicable)
   solver.ts
   generator.ts
   state.ts
