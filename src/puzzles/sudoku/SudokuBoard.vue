@@ -12,7 +12,12 @@ import {
   type GameSession,
 } from '../../core/game'
 import { getCell } from '../../core/grid'
-import { getNumericEntryIntent, useGridSelection } from '../shared/gridInput'
+import {
+  getNumericEntryIntent,
+  resolveNumericEntryMode,
+  useGridSelection,
+  type NumericEntryMode,
+} from '../shared/gridInput'
 import { generateSudoku } from './generator'
 import {
   clearSudokuProgress,
@@ -28,6 +33,7 @@ const boardElement = ref<HTMLElement | null>(null)
 const puzzle = computed(() => generateSudoku({ seed: props.seed }))
 const highlightedDigit = ref<SudokuDigit | null>(null)
 const hintMode = ref(false)
+const draggingSelection = ref(false)
 const selection = useGridSelection(9, 9)
 
 function createSession(): GameSession<SudokuPlayerState, SudokuMove> {
@@ -55,6 +61,8 @@ watch(
   () => {
     selection.clear()
     highlightedDigit.value = null
+    hintMode.value = false
+    draggingSelection.value = false
     session.value = createSession()
   },
 )
@@ -63,9 +71,24 @@ function isGiven(row: number, col: number): boolean {
   return puzzle.value.question.givens.cells[row]?.[col] !== null
 }
 
-function selectCell(row: number, col: number, event: MouseEvent): void {
+function startPointerSelection(row: number, col: number, event: PointerEvent): void {
+  if (event.button !== 0) return
+  draggingSelection.value = true
   selection.select({ row, col }, event.ctrlKey || event.metaKey || event.shiftKey)
+  highlightFullNumber(row, col)
   void nextTick(() => boardElement.value?.focus())
+}
+
+function extendPointerSelection(row: number, col: number, event: PointerEvent): void {
+  if (!draggingSelection.value || (event.buttons & 1) === 0) {
+    draggingSelection.value = false
+    return
+  }
+  selection.select({ row, col }, true)
+}
+
+function stopPointerSelection(): void {
+  draggingSelection.value = false
 }
 
 function persist(): void {
@@ -113,7 +136,20 @@ function enterHint(digit: SudokuDigit): void {
 }
 
 function enterFromPad(digit: number): void {
-  hintMode.value ? enterHint(digit as SudokuDigit) : enterValue(digit as SudokuDigit)
+  enterDigit(digit as SudokuDigit, hintMode.value ? 'hint' : 'value')
+}
+
+function enterDigit(digit: SudokuDigit, requestedMode: NumericEntryMode): void {
+  const mode = resolveNumericEntryMode(
+    requestedMode,
+    selection.selectedPositions.value.length,
+  )
+  if (mode === 'hint') {
+    enterHint(digit)
+  } else {
+    enterValue(digit)
+    highlightedDigit.value = digit
+  }
 }
 
 function undoMove(): void {
@@ -130,12 +166,28 @@ function resetPuzzle(): void {
   session.value = resetGame(session.value)
   selection.clear()
   highlightedDigit.value = null
+  hintMode.value = false
   clearSudokuProgress(localStorage, props.seed)
 }
 
-function showMatchingDigit(row: number, col: number): void {
+function selectMatchingFullNumbers(row: number, col: number): void {
   const value = getCell(board.value, { row, col })
-  highlightedDigit.value = value ?? null
+  if (value === undefined || value === null) return
+  highlightedDigit.value = value
+  const matchingPositions = []
+  for (let matchingRow = 0; matchingRow < 9; matchingRow += 1) {
+    for (let matchingCol = 0; matchingCol < 9; matchingCol += 1) {
+      if (board.value.cells[matchingRow]?.[matchingCol] === value) {
+        matchingPositions.push({ row: matchingRow, col: matchingCol })
+      }
+    }
+  }
+  selection.selectMany(matchingPositions, { row, col })
+}
+
+function highlightFullNumber(row: number, col: number): void {
+  const value = getCell(board.value, { row, col })
+  if (value !== undefined && value !== null) highlightedDigit.value = value
 }
 
 function hintsAt(row: number, col: number): readonly SudokuDigit[] {
@@ -148,6 +200,17 @@ function cellContainsHighlightedDigit(row: number, col: number): boolean {
 
 function cellContainsHighlightedHint(row: number, col: number): boolean {
   return highlightedDigit.value !== null && hintsAt(row, col).includes(highlightedDigit.value)
+}
+
+function isInActiveUnit(row: number, col: number): boolean {
+  const active = selection.activePosition.value
+  if (active === null || (active.row === row && active.col === col)) return false
+  return (
+    active.row === row ||
+    active.col === col ||
+    (Math.floor(active.row / 3) === Math.floor(row / 3) &&
+      Math.floor(active.col / 3) === Math.floor(col / 3))
+  )
 }
 
 function cellLabel(row: number, col: number): string {
@@ -176,6 +239,8 @@ function handleMovement(event: KeyboardEvent): boolean {
     direction[1],
     event.shiftKey || event.ctrlKey || event.metaKey,
   )
+  const active = selection.activePosition.value
+  if (active !== null) highlightFullNumber(active.row, active.col)
   return true
 }
 
@@ -190,9 +255,7 @@ function handleKeydown(event: KeyboardEvent): void {
   const numericIntent = getNumericEntryIntent(event)
   if (numericIntent !== null) {
     event.preventDefault()
-    numericIntent.mode === 'hint'
-      ? enterHint(numericIntent.value as SudokuDigit)
-      : enterValue(numericIntent.value as SudokuDigit)
+    enterDigit(numericIntent.value as SudokuDigit, numericIntent.mode)
     return
   }
   if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -202,7 +265,6 @@ function handleKeydown(event: KeyboardEvent): void {
   }
   if (event.key === 'Escape') {
     event.preventDefault()
-    highlightedDigit.value = null
     selection.clear()
   }
 }
@@ -213,8 +275,9 @@ function handleKeydown(event: KeyboardEvent): void {
     <p class="seed">Seed: <code>{{ seed }}</code></p>
     <p v-if="solved" class="solved" role="status">Completed — nice work!</p>
     <p v-else class="instructions">
-      Move with arrows or WASD. Digits enter values; Shift + digit toggles a hint.
-      Ctrl/⌘ or Shift extends the selection.
+      Move with arrows or WASD. Click-drag, Ctrl/⌘, or Shift selects multiple cells.
+      Digits enter values; Shift + digit—or any digit with multiple cells selected—toggles a hint.
+      Double-click a full value to select every matching full value.
     </p>
 
     <div
@@ -224,6 +287,9 @@ function handleKeydown(event: KeyboardEvent): void {
       aria-label="Sudoku board"
       tabindex="0"
       @keydown="handleKeydown"
+      @pointerup="stopPointerSelection"
+      @pointercancel="stopPointerSelection"
+      @pointerleave="stopPointerSelection"
     >
       <button
         v-for="(_, index) in 81"
@@ -237,6 +303,7 @@ function handleKeydown(event: KeyboardEvent): void {
           entered: !isGiven(Math.floor(index / 9), index % 9) && board.cells[Math.floor(index / 9)]?.[index % 9] !== null,
           selected: selection.isSelected({ row: Math.floor(index / 9), col: index % 9 }),
           active: selection.activePosition.value?.row === Math.floor(index / 9) && selection.activePosition.value?.col === index % 9,
+          related: isInActiveUnit(Math.floor(index / 9), index % 9),
           matching: cellContainsHighlightedDigit(Math.floor(index / 9), index % 9),
           'hint-matching': cellContainsHighlightedHint(Math.floor(index / 9), index % 9),
           'box-right': index % 9 === 2 || index % 9 === 5,
@@ -244,8 +311,10 @@ function handleKeydown(event: KeyboardEvent): void {
         }"
         :aria-label="cellLabel(Math.floor(index / 9), index % 9)"
         :aria-selected="selection.isSelected({ row: Math.floor(index / 9), col: index % 9 })"
-        @click="selectCell(Math.floor(index / 9), index % 9, $event)"
-        @dblclick="showMatchingDigit(Math.floor(index / 9), index % 9)"
+        @pointerdown="startPointerSelection(Math.floor(index / 9), index % 9, $event)"
+        @pointerenter="extendPointerSelection(Math.floor(index / 9), index % 9, $event)"
+        @dragstart.prevent
+        @dblclick.stop.prevent="selectMatchingFullNumbers(Math.floor(index / 9), index % 9)"
       >
         <span v-if="board.cells[Math.floor(index / 9)]?.[index % 9]" class="cell-value">
           {{ board.cells[Math.floor(index / 9)]?.[index % 9] }}
@@ -258,7 +327,6 @@ function handleKeydown(event: KeyboardEvent): void {
               visible: hintsAt(Math.floor(index / 9), index % 9).includes(digit as SudokuDigit),
               highlighted: highlightedDigit === digit && hintsAt(Math.floor(index / 9), index % 9).includes(digit as SudokuDigit),
             }"
-            @dblclick.stop="highlightedDigit = digit as SudokuDigit"
           >
             {{ hintsAt(Math.floor(index / 9), index % 9).includes(digit as SudokuDigit) ? digit : '' }}
           </span>
@@ -285,9 +353,6 @@ function handleKeydown(event: KeyboardEvent): void {
     <div class="game-actions">
       <button type="button" :disabled="!undoAvailable" @click="undoMove">Undo</button>
       <button type="button" :disabled="!redoAvailable" @click="redoMove">Redo</button>
-      <button v-if="highlightedDigit" type="button" @click="highlightedDigit = null">
-        Clear {{ highlightedDigit }} highlight
-      </button>
       <button type="button" @click="resetPuzzle">Reset</button>
     </div>
   </div>
@@ -300,16 +365,22 @@ function handleKeydown(event: KeyboardEvent): void {
 .sudoku-board {
   display: grid;
   grid-template-columns: repeat(9, 1fr);
+  grid-template-rows: repeat(9, minmax(0, 1fr));
   width: min(100%, 33rem);
   aspect-ratio: 1;
   border: 2px solid #172033;
   outline-offset: 0.3rem;
+  overflow: hidden;
   user-select: none;
 }
 .sudoku-cell {
   position: relative;
+  width: 100%;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   padding: 0;
+  overflow: hidden;
   border: 0;
   border-right: 1px solid #aeb6c3;
   border-bottom: 1px solid #aeb6c3;
@@ -317,19 +388,30 @@ function handleKeydown(event: KeyboardEvent): void {
   color: #315c9a;
   background: #fff;
   font: inherit;
+  font-weight: 700;
   cursor: pointer;
 }
 .sudoku-cell:nth-child(9n) { border-right: 0; }
 .sudoku-cell:nth-last-child(-n + 9) { border-bottom: 0; }
 .sudoku-cell.box-right { border-right: 2px solid #172033; }
 .sudoku-cell.box-bottom { border-bottom: 2px solid #172033; }
-.sudoku-cell.given { color: #172033; background: #f0f2f5; font-weight: 700; }
+.sudoku-cell.given { color: #172033; background: #f0f2f5; }
+.sudoku-cell.related { background: #fff9e8; }
 .sudoku-cell.matching { background: #fff0ad; }
 .sudoku-cell.hint-matching { background: #fff8d8; }
 .sudoku-cell.selected { background: #dbe9ff; box-shadow: inset 0 0 0 2px #6c91c7; }
 .sudoku-cell.active { box-shadow: inset 0 0 0 3px #244f8d; z-index: 1; }
+.sudoku-cell:hover::after {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background: rgba(23, 32, 51, 0.1);
+  content: '';
+  pointer-events: none;
+}
 .cell-value {
   display: grid;
+  width: 100%;
   height: 100%;
   place-items: center;
   font-size: clamp(1rem, 5vw, 1.6rem);
@@ -345,7 +427,8 @@ function handleKeydown(event: KeyboardEvent): void {
   font-size: clamp(0.42rem, 1.7vw, 0.68rem);
   line-height: 1;
 }
-.cell-hints > span { display: grid; place-items: center; border-radius: 50%; }
+.cell-hints > span { display: grid; min-width: 0; min-height: 0; place-items: center; border-radius: 50%; }
+.cell-hints > span:not(.visible) { pointer-events: none; }
 .cell-hints > span.highlighted { color: #172033; background: #ffd84f; font-weight: 800; }
 .number-pad, .game-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 1rem; }
 .number-pad button, .game-actions button {

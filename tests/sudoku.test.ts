@@ -250,6 +250,45 @@ describe('Sudoku player state and generic history', () => {
     expect(hinted).toBe(entered)
   })
 
+  it('clears hints with Backspace-style moves', () => {
+    const hinted = applySudokuMove(puzzle, createInitialSudokuState(puzzle), {
+      kind: 'hint',
+      positions: [{ row: 0, col: 2 }],
+      digit: 6,
+      enabled: true,
+    })
+    const cleared = applySudokuMove(puzzle, hinted, valueMove(0, 2, null))
+    expect(cleared.hints.cells[0]?.[2]).toEqual([])
+  })
+
+  it('removes matching peer hints when filling a cell and restores them on undo', () => {
+    const hintPositions = [
+      { row: 0, col: 2 },
+      { row: 0, col: 3 },
+      { row: 1, col: 2 },
+      { row: 1, col: 1 },
+      { row: 4, col: 4 },
+    ]
+    const hinted = applySudokuMove(puzzle, createInitialSudokuState(puzzle), {
+      kind: 'hint',
+      positions: hintPositions,
+      digit: 4,
+      enabled: true,
+    })
+    let history = createMoveHistory<ReturnType<typeof createInitialSudokuState>, SudokuMove>(hinted)
+    history = applyMove(history, valueMove(0, 2, 4), reduce)
+    expect(history.currentState.hints.cells[0]?.[3]).toEqual([])
+    expect(history.currentState.hints.cells[1]?.[2]).toEqual([])
+    expect(history.currentState.hints.cells[1]?.[1]).toEqual([])
+    expect(history.currentState.hints.cells[4]?.[4]).toEqual([4])
+
+    history = undo(history)
+    expect(history.currentState.hints.cells[0]?.[2]).toEqual([4])
+    expect(history.currentState.hints.cells[0]?.[3]).toEqual([4])
+    expect(history.currentState.hints.cells[1]?.[2]).toEqual([4])
+    expect(history.currentState.hints.cells[1]?.[1]).toEqual([4])
+  })
+
   it('merges entries over empty cells while preserving givens', () => {
     const entered = applySudokuMove(
       puzzle,

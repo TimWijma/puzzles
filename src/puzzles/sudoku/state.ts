@@ -54,6 +54,23 @@ export function applySudokuMove(
         hints = setCell(hints, position, [])
         changed = true
       }
+      if (move.value !== null) {
+        for (let row = 0; row < SUDOKU_SIZE; row += 1) {
+          for (let col = 0; col < SUDOKU_SIZE; col += 1) {
+            const isPeer =
+              row === position.row ||
+              col === position.col ||
+              (Math.floor(row / 3) === Math.floor(position.row / 3) &&
+                Math.floor(col / 3) === Math.floor(position.col / 3))
+            if (!isPeer) continue
+            const peer = { row, col }
+            const peerHints = getCell(hints, peer) ?? []
+            if (!peerHints.includes(move.value)) continue
+            hints = setCell(hints, peer, peerHints.filter((digit) => digit !== move.value))
+            changed = true
+          }
+        }
+      }
       continue
     }
 

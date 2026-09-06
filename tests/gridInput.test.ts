@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { getNumericEntryIntent, useGridSelection } from '../src/puzzles/shared/gridInput'
+import {
+  getNumericEntryIntent,
+  resolveNumericEntryMode,
+  useGridSelection,
+} from '../src/puzzles/shared/gridInput'
 
 function keyboardEvent(overrides: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -31,6 +35,12 @@ describe('shared grid input', () => {
     ).toBeNull()
   })
 
+  it('uses hint mode automatically when multiple cells are selected', () => {
+    expect(resolveNumericEntryMode('value', 1)).toBe('value')
+    expect(resolveNumericEntryMode('value', 2)).toBe('hint')
+    expect(resolveNumericEntryMode('hint', 1)).toBe('hint')
+  })
+
   it('supports replacement, additive selection, and movement', () => {
     const selection = useGridSelection(3, 3)
     selection.select({ row: 1, col: 1 })
@@ -41,6 +51,11 @@ describe('shared grid input', () => {
     ])
     selection.move(1, 0)
     expect(selection.selectedPositions.value).toEqual([{ row: 2, col: 2 }])
+    selection.selectMany([{ row: 0, col: 0 }, { row: 2, col: 1 }], { row: 2, col: 1 })
+    expect(selection.selectedPositions.value).toEqual([
+      { row: 0, col: 0 },
+      { row: 2, col: 1 },
+    ])
     selection.clear()
     expect(selection.selectedPositions.value).toEqual([])
   })

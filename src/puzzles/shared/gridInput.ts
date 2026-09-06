@@ -8,6 +8,13 @@ export interface NumericEntryIntent {
   readonly mode: NumericEntryMode
 }
 
+export function resolveNumericEntryMode(
+  requestedMode: NumericEntryMode,
+  selectedCellCount: number,
+): NumericEntryMode {
+  return requestedMode === 'hint' || selectedCellCount > 1 ? 'hint' : 'value'
+}
+
 /** Converts a digit key into a reusable value-or-hint intent. */
 export function getNumericEntryIntent(
   event: Pick<KeyboardEvent, 'altKey' | 'code' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>,
@@ -56,6 +63,16 @@ export function useGridSelection(
     activePosition.value = position
   }
 
+  const selectMany = (positions: readonly Position[], active?: Position): void => {
+    const selectable = positions.filter((position) => isInBounds(position) && canSelect(position))
+    selectedKeys.value = new Set(selectable.map(positionKey))
+    const requestedActive = active === undefined ? undefined : positionKey(active)
+    activePosition.value =
+      requestedActive !== undefined && selectedKeys.value.has(requestedActive)
+        ? active as Position
+        : selectable[0] ?? null
+  }
+
   const firstSelectablePosition = (): Position | null => {
     for (let row = 0; row < toValue(rowCount); row += 1) {
       for (let col = 0; col < toValue(columnCount); col += 1) {
@@ -92,5 +109,5 @@ export function useGridSelection(
 
   const isSelected = (position: Position): boolean => selectedKeys.value.has(positionKey(position))
 
-  return { activePosition, clear, isSelected, move, select, selectedPositions }
+  return { activePosition, clear, isSelected, move, select, selectMany, selectedPositions }
 }
