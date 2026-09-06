@@ -17,7 +17,10 @@ export function isSudokuDigit(value: unknown): value is SudokuDigit {
 export function createInitialSudokuState(
   _instance?: SudokuPuzzleInstance,
 ): SudokuPlayerState {
-  return { entries: createFilledGrid(SUDOKU_SIZE, SUDOKU_SIZE, null) }
+  return {
+    entries: createFilledGrid(SUDOKU_SIZE, SUDOKU_SIZE, null),
+    hints: createFilledGrid<readonly SudokuDigit[]>(SUDOKU_SIZE, SUDOKU_SIZE, []),
+  }
 }
 
 export function applySudokuMove(
@@ -25,19 +28,47 @@ export function applySudokuMove(
   state: SudokuPlayerState,
   move: SudokuMove,
 ): SudokuPlayerState {
-  if (
-    !isInBounds(instance.question.givens, move) ||
-    getCell(instance.question.givens, move) !== null ||
-    (move.value !== null && !isSudokuDigit(move.value))
-  ) {
-    return state
+  let entries = state.entries
+  let hints = state.hints
+  let changed = false
+  const seen = new Set<string>()
+
+  for (const position of move.positions) {
+    const key = `${position.row}:${position.col}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (
+      !isInBounds(instance.question.givens, position) ||
+      getCell(instance.question.givens, position) !== null
+    ) {
+      continue
+    }
+
+    if (move.kind === 'value') {
+      if (move.value !== null && !isSudokuDigit(move.value)) continue
+      if (getCell(entries, position) !== move.value) {
+        entries = setCell(entries, position, move.value)
+        changed = true
+      }
+      if ((getCell(hints, position)?.length ?? 0) > 0) {
+        hints = setCell(hints, position, [])
+        changed = true
+      }
+      continue
+    }
+
+    if (!isSudokuDigit(move.digit) || getCell(entries, position) !== null) continue
+    const currentHints = getCell(hints, position) ?? []
+    const nextHints = move.enabled
+      ? [...new Set([...currentHints, move.digit])].sort((left, right) => left - right)
+      : currentHints.filter((digit) => digit !== move.digit)
+    if (nextHints.length !== currentHints.length) {
+      hints = setCell(hints, position, nextHints)
+      changed = true
+    }
   }
 
-  if (getCell(state.entries, move) === move.value) {
-    return state
-  }
-
-  return { entries: setCell(state.entries, move, move.value) }
+  return changed ? { entries, hints } : state
 }
 
 export function mergeSudokuBoard(
@@ -57,4 +88,3 @@ export function mergeSudokuBoard(
 
   return { rowCount: SUDOKU_SIZE, columnCount: SUDOKU_SIZE, cells }
 }
-

@@ -17,6 +17,8 @@ after real puzzle modules expose shared needs.
 - `src/core/random` supplies a dependency-free deterministic random source from an arbitrary
   string seed, with integer, boolean, selection, and non-mutating shuffle helpers.
 - `src/puzzles` owns the puzzle registry and application-level board component lookup.
+  Its `shared/gridInput.ts` helper contains reusable grid selection and numeric value/hint input
+  intents for keyboard-driven puzzle boards without coupling those UI concepts to `core`.
 
 Puzzle-specific rules belong under `src/puzzles/<puzzle-name>`. Core code must never branch on a
 puzzle ID or contain logic such as Sudoku validation or Sea Battle ship detection. Keeping those

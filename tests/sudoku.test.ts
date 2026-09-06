@@ -16,6 +16,7 @@ import {
   rowHasDuplicateValues,
   solve,
   type SudokuBoard,
+  type SudokuCell,
   type SudokuDigit,
   type SudokuMove,
   type SudokuPuzzleInstance,
@@ -73,6 +74,10 @@ function instance(givens = board(puzzleRows)): SudokuPuzzleInstance {
   }
 }
 
+function valueMove(row: number, col: number, value: SudokuCell): SudokuMove {
+  return { kind: 'value', positions: [{ row, col }], value }
+}
+
 describe('Sudoku validator', () => {
   it('accepts a valid row and detects a duplicate row', () => {
     expect(hasDuplicateNonEmptyValues([1, 2, 3, null, 4, 5, 6, 7, 8])).toBe(false)
@@ -107,6 +112,7 @@ describe('Sudoku validator', () => {
     expect(
       isSudokuSolved(puzzle, {
         entries: { rowCount: 9, columnCount: 9, cells: entries },
+        hints: createInitialSudokuState(puzzle).hints,
       }),
     ).toBe(true)
   })
@@ -180,14 +186,14 @@ describe('Sudoku player state and generic history', () => {
 
   it('cannot modify a given', () => {
     const state = createInitialSudokuState(puzzle)
-    expect(applySudokuMove(puzzle, state, { row: 0, col: 0, value: 1 })).toBe(state)
+    expect(applySudokuMove(puzzle, state, valueMove(0, 0, 1))).toBe(state)
     expect(puzzle.question.givens.cells[0]?.[0]).toBe(5)
   })
 
   it('enters and clears a player value without changing givens', () => {
     const initial = createInitialSudokuState(puzzle)
-    const entered = applySudokuMove(puzzle, initial, { row: 0, col: 2, value: 4 })
-    const cleared = applySudokuMove(puzzle, entered, { row: 0, col: 2, value: null })
+    const entered = applySudokuMove(puzzle, initial, valueMove(0, 2, 4))
+    const cleared = applySudokuMove(puzzle, entered, valueMove(0, 2, null))
     expect(entered.entries.cells[0]?.[2]).toBe(4)
     expect(cleared.entries.cells[0]?.[2]).toBeNull()
     expect(puzzle.question.givens.cells[0]?.[2]).toBeNull()
@@ -196,7 +202,7 @@ describe('Sudoku player state and generic history', () => {
   it('supports undo, redo, and reset through generic move history', () => {
     const initial = createInitialSudokuState(puzzle)
     let history = createMoveHistory<ReturnType<typeof createInitialSudokuState>, SudokuMove>(initial)
-    history = applyMove(history, { row: 0, col: 2, value: 4 }, reduce)
+    history = applyMove(history, valueMove(0, 2, 4), reduce)
     expect(history.currentState.entries.cells[0]?.[2]).toBe(4)
     history = undo(history)
     expect(history.currentState.entries.cells[0]?.[2]).toBeNull()
@@ -208,11 +214,47 @@ describe('Sudoku player state and generic history', () => {
     expect(history.future).toEqual([])
   })
 
+  it('applies hints and values to multiple cells as one undoable move', () => {
+    const initial = createInitialSudokuState(puzzle)
+    const positions = [{ row: 0, col: 2 }, { row: 0, col: 3 }]
+    const hintMove: SudokuMove = { kind: 'hint', positions, digit: 4, enabled: true }
+    let history = createMoveHistory<ReturnType<typeof createInitialSudokuState>, SudokuMove>(initial)
+    history = applyMove(history, hintMove, reduce)
+    expect(history.currentState.hints.cells[0]?.[2]).toEqual([4])
+    expect(history.currentState.hints.cells[0]?.[3]).toEqual([4])
+    expect(history.past).toHaveLength(1)
+
+    history = undo(history)
+    expect(history.currentState.hints.cells[0]?.[2]).toEqual([])
+    expect(history.currentState.hints.cells[0]?.[3]).toEqual([])
+    history = redo(history)
+    history = applyMove(
+      history,
+      { kind: 'value', positions, value: 7 },
+      reduce,
+    )
+    expect(history.currentState.entries.cells[0]?.slice(2, 4)).toEqual([7, 7])
+    expect(history.currentState.hints.cells[0]?.[2]).toEqual([])
+    expect(history.currentState.hints.cells[0]?.[3]).toEqual([])
+  })
+
+  it('does not add hints to givens or filled cells', () => {
+    const initial = createInitialSudokuState(puzzle)
+    const entered = applySudokuMove(puzzle, initial, valueMove(0, 2, 4))
+    const hinted = applySudokuMove(puzzle, entered, {
+      kind: 'hint',
+      positions: [{ row: 0, col: 0 }, { row: 0, col: 2 }],
+      digit: 6,
+      enabled: true,
+    })
+    expect(hinted).toBe(entered)
+  })
+
   it('merges entries over empty cells while preserving givens', () => {
     const entered = applySudokuMove(
       puzzle,
       createInitialSudokuState(puzzle),
-      { row: 0, col: 2, value: 4 },
+      valueMove(0, 2, 4),
     )
     const merged = mergeSudokuBoard(puzzle, entered)
     expect(merged.cells[0]?.slice(0, 3)).toEqual([5, 3, 4])
@@ -233,13 +275,33 @@ describe('Sudoku persistence', () => {
     const state = applySudokuMove(
       puzzle,
       createInitialSudokuState(puzzle),
-      { row: 0, col: 2, value: 4 },
+      valueMove(0, 2, 4),
     )
     saveSudokuProgress(storage, 'abc123', state, false)
     expect(sudokuProgressKey('abc123')).toBe('puzzle:sudoku:abc123')
     expect(loadSudokuProgress(storage, 'abc123', puzzle)?.state).toEqual(state)
     clearSudokuProgress(storage, 'abc123')
     expect(loadSudokuProgress(storage, 'abc123', puzzle)).toBeNull()
+  })
+
+  it('persists hints and migrates version-one progress with empty hints', () => {
+    const storage = new MemoryStorage()
+    const puzzle = instance()
+    const hinted = applySudokuMove(puzzle, createInitialSudokuState(puzzle), {
+      kind: 'hint',
+      positions: [{ row: 0, col: 2 }],
+      digit: 6,
+      enabled: true,
+    })
+    saveSudokuProgress(storage, 'hints', hinted, false)
+    expect(loadSudokuProgress(storage, 'hints', puzzle)?.state.hints.cells[0]?.[2]).toEqual([6])
+
+    storage.setItem(sudokuProgressKey('legacy'), JSON.stringify({
+      version: 1,
+      entries: createInitialSudokuState(puzzle).entries.cells,
+      completed: false,
+    }))
+    expect(loadSudokuProgress(storage, 'legacy', puzzle)?.state.hints.cells.flat().flat()).toEqual([])
   })
 
   it('ignores malformed stored data', () => {

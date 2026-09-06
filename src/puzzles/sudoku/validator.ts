@@ -4,8 +4,8 @@ import { isSudokuDigit, mergeSudokuBoard, SUDOKU_SIZE } from './state'
 import type {
   SudokuBoard,
   SudokuCell,
-  SudokuMove,
   SudokuPlayerState,
+  SudokuProposedMove,
   SudokuPuzzleInstance,
 } from './types'
 
@@ -82,7 +82,7 @@ export function isValidSudokuSolution(board: SudokuBoard): boolean {
 export function isValidSudokuMove(
   instance: SudokuPuzzleInstance,
   state: SudokuPlayerState,
-  move: SudokuMove,
+  move: SudokuProposedMove,
 ): boolean {
   const given = getCell(instance.question.givens, move)
   if (given === undefined || given !== null) return false
@@ -136,4 +136,3 @@ export function validateSudoku(
   const complete = board.cells.every((row) => row.every((value) => value !== null))
   return { valid: issues.length === 0, complete: complete && issues.length === 0, issues }
 }
-
