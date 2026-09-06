@@ -8,6 +8,7 @@ const router = createRouter({
   routes: [
     { path: '/', name: 'home', component: HomeView },
     { path: '/puzzles', name: 'puzzles', component: PuzzlesView },
+    { path: '/puzzles/:puzzleId/:seed', name: 'seeded-puzzle', component: PuzzleView },
     { path: '/puzzles/:puzzleId', name: 'puzzle', component: PuzzleView },
   ],
   scrollBehavior: () => ({ top: 0 }),

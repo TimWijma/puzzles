@@ -1,8 +1,7 @@
 # Puzzle Cabinet
 
-An early Vue 3 and TypeScript shell for a personal collection of grid-based logic puzzles.
-No puzzle implementations are included yet; see [ARCHITECTURE.md](./ARCHITECTURE.md) for the
-module boundaries and extension path.
+A Vue 3 and TypeScript collection of grid-based logic puzzles. Sudoku is the first playable
+module; see [ARCHITECTURE.md](./ARCHITECTURE.md) for the module boundaries and extension path.
 
 ## Commands
 

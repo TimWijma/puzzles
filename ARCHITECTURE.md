@@ -16,7 +16,7 @@ after real puzzle modules expose shared needs.
   completion status, and elapsed time. Move and state shapes are supplied by each puzzle.
 - `src/core/random` supplies a dependency-free deterministic random source from an arbitrary
   string seed, with integer, boolean, selection, and non-mutating shuffle helpers.
-- `src/puzzles` owns the puzzle registry. It is empty until a real puzzle module is available.
+- `src/puzzles` owns the puzzle registry and application-level board component lookup.
 
 Puzzle-specific rules belong under `src/puzzles/<puzzle-name>`. Core code must never branch on a
 puzzle ID or contain logic such as Sudoku validation or Sea Battle ship detection. Keeping those
@@ -48,7 +48,7 @@ Seeds are identifiers such as `abc123` or `sudoku-492810` and carry no date sema
 
 ## Adding a puzzle
 
-A future Sudoku module is expected to look roughly like this:
+The Sudoku module demonstrates the intended structure:
 
 ```text
 src/puzzles/sudoku/
@@ -56,8 +56,8 @@ src/puzzles/sudoku/
   validator.ts
   solver.ts
   generator.ts
-  difficulty.ts
   state.ts
+  persistence.ts
   SudokuBoard.vue
   index.ts
 ```

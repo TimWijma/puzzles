@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { RouterLink } from 'vue-router'
-import { getPuzzleModules } from '../puzzles'
+import { createPuzzleSeed, getPuzzleModules } from '../puzzles'
 
 const puzzleModules = getPuzzleModules()
+const seeds = new Map(puzzleModules.map((puzzle) => [puzzle.id, createPuzzleSeed()]))
 </script>
 
 <template>
@@ -13,7 +14,11 @@ const puzzleModules = getPuzzleModules()
     </p>
     <ul v-else>
       <li v-for="puzzle in puzzleModules" :key="puzzle.id">
-        <RouterLink :to="`/puzzles/${puzzle.id}`">{{ puzzle.displayName }}</RouterLink>
+        <RouterLink
+          :to="{ name: 'seeded-puzzle', params: { puzzleId: puzzle.id, seed: seeds.get(puzzle.id) } }"
+        >
+          Start a new {{ puzzle.displayName }} puzzle
+        </RouterLink>
       </li>
     </ul>
   </section>

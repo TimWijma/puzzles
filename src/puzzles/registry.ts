@@ -1,8 +1,7 @@
 import type { PuzzleModule } from '../core/puzzle'
+import { sudokuModule } from './sudoku'
 
-// Puzzle modules are registered here as they are implemented. The registry is
-// intentionally empty until the first real puzzle exists.
-const puzzleModules: readonly PuzzleModule[] = []
+const puzzleModules: readonly PuzzleModule[] = [sudokuModule]
 
 const modulesById = new Map(puzzleModules.map((module) => [module.id, module]))
 
