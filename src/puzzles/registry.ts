@@ -1,8 +1,9 @@
 import type { PuzzleModule } from '../core/puzzle'
 import { queensModule } from './queens'
 import { sudokuModule } from './sudoku'
+import { suguruModule } from './suguru'
 
-const puzzleModules: readonly PuzzleModule[] = [sudokuModule, queensModule]
+const puzzleModules: readonly PuzzleModule[] = [sudokuModule, queensModule, suguruModule]
 
 const modulesById = new Map(puzzleModules.map((module) => [module.id, module]))
 
