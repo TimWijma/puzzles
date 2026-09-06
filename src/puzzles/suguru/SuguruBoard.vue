@@ -1,26 +1,24 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, shallowRef, watch, type CSSProperties } from 'vue'
 import {
-  applyGameMove,
-  canRedo,
-  canUndo,
-  completeGame,
-  createGameSession,
-  redoGameMove,
-  resetGame,
-  undoGameMove,
-  type GameSession,
+  applyGameMove, canRedo, canUndo, completeGame, createGameSession, redoGameMove,
+  resetGame, undoGameMove, type GameSession,
 } from '../../core/game'
 import { getCell } from '../../core/grid'
-import { getNumericEntryIntent, useGridSelection } from '../shared/gridInput'
-import { generateSuguru } from './generator'
 import {
-  clearSuguruProgress,
-  loadSuguruProgress,
-  saveSuguruProgress,
-} from './persistence'
+  findIncorrectFilledPositions,
+  positionKey,
+  positionKeySet,
+} from '../shared/boardCheck'
+import {
+  getNumericEntryIntent, resolveNumericEntryMode, useNumericGridInteraction,
+  type NumericEntryMode,
+} from '../shared/gridInput'
+import { generateSuguru } from './generator'
+import { clearSuguruProgress, loadSuguruProgress, saveSuguruProgress } from './persistence'
 import { regionSize } from './regions'
 import { applySuguruMove, createInitialSuguruState, mergeSuguruBoard } from './state'
+import { solve as solveSuguru } from './solver'
 import type { SuguruMove, SuguruPlayerState } from './types'
 import { isSuguruCellConflicting, isSuguruSolved } from './validator'
 
@@ -29,7 +27,6 @@ const boardElement = ref<HTMLElement | null>(null)
 const puzzle = computed(() => generateSuguru({ seed: props.seed }))
 const rowCount = computed(() => puzzle.value.question.regions.rowCount)
 const columnCount = computed(() => puzzle.value.question.regions.columnCount)
-const selection = useGridSelection(rowCount, columnCount)
 
 function createSession(): GameSession<SuguruPlayerState, SuguruMove> {
   const initialState = createInitialSuguruState(puzzle.value)
@@ -46,31 +43,57 @@ function createSession(): GameSession<SuguruPlayerState, SuguruMove> {
 const session = shallowRef(createSession())
 const state = computed(() => session.value.history.currentState)
 const board = computed(() => mergeSuguruBoard(puzzle.value, state.value))
+const solution = computed(() => solveSuguru(puzzle.value))
+const checkPerformed = ref(false)
+const incorrectEntryKeys = shallowRef<ReadonlySet<string>>(new Set())
+const {
+  cellContainsHighlightedHint, extendPointerSelection,
+  handleMovement, highlightedValue, hintMode, hintsAt, resetInteraction,
+  selectMatchingFullNumbers, selection, startPointerSelection, stopPointerSelection,
+} = useNumericGridInteraction({
+  rowCount,
+  columnCount,
+  board,
+  hints: computed(() => state.value.hints),
+})
 const solved = computed(() => session.value.completion === 'completed')
 const undoAvailable = computed(() => canUndo(session.value.history))
 const redoAvailable = computed(() => canRedo(session.value.history))
+const checkMessage = computed(() => {
+  if (!checkPerformed.value) return ''
+  const count = incorrectEntryKeys.value.size
+  return count === 0
+    ? 'Everything entered so far is correct.'
+    : `${count} ${count === 1 ? 'entry is' : 'entries are'} incorrect.`
+})
+const selectedValue = computed(() => {
+  const active = selection.activePosition.value
+  return active === null ? null : (getCell(board.value, active) ?? null)
+})
 const selectedMaximum = computed(() => {
   const active = selection.activePosition.value
-  if (active === null) return 0
-  const regionId = getCell(puzzle.value.question.regions, active)
-  return regionId === undefined ? 0 : regionSize(puzzle.value.question.regions, regionId)
+  return active === null ? 0 : maximumAt(active.row, active.col)
 })
 
-watch(
-  () => props.seed,
-  () => {
-    selection.clear()
-    session.value = createSession()
-  },
-)
+watch(() => props.seed, () => {
+  resetInteraction()
+  clearCheckResult()
+  session.value = createSession()
+})
+
+function maximumAt(row: number, col: number): number {
+  const regionId = getCell(puzzle.value.question.regions, { row, col })
+  return regionId === undefined ? 0 : regionSize(puzzle.value.question.regions, regionId)
+}
 
 function isGiven(row: number, col: number): boolean {
   return puzzle.value.question.givens.cells[row]?.[col] !== null
 }
 
-function selectCell(row: number, col: number): void {
-  selection.select({ row, col })
-  void nextTick(() => boardElement.value?.focus())
+function startCellSelection(row: number, col: number, event: PointerEvent): void {
+  if (startPointerSelection({ row, col }, event)) {
+    void nextTick(() => boardElement.value?.focus())
+  }
 }
 
 function persist(): void {
@@ -88,38 +111,84 @@ function updateCompletion(
 function commit(move: SuguruMove): void {
   const nextState = applySuguruMove(puzzle.value, state.value, move)
   if (nextState === state.value) return
-  session.value = updateCompletion(
-    applyGameMove(
-      session.value,
-      move,
-      (current, currentMove) => applySuguruMove(puzzle.value, current, currentMove),
-      Date.now(),
-    ),
-  )
+  clearCheckResult()
+  session.value = updateCompletion(applyGameMove(
+    session.value,
+    move,
+    (current, currentMove) => applySuguruMove(puzzle.value, current, currentMove),
+    Date.now(),
+  ))
   persist()
 }
 
 function enterValue(value: number | null): void {
-  const active = selection.activePosition.value
-  if (active === null || solved.value) return
-  if (value !== null && value > selectedMaximum.value) return
-  commit({ ...active, value })
+  if (selection.selectedPositions.value.length === 0 || solved.value) return
+  commit({ kind: 'value', positions: selection.selectedPositions.value, value })
+}
+
+function enterHint(digit: number): void {
+  if (selection.selectedPositions.value.length === 0 || solved.value) return
+  const editableEmptyCells = selection.selectedPositions.value.filter(
+    (position) =>
+      !isGiven(position.row, position.col) &&
+      getCell(state.value.entries, position) === null &&
+      digit <= maximumAt(position.row, position.col),
+  )
+  const enabled = editableEmptyCells.some((position) => !hintsAt(position).includes(digit))
+  commit({ kind: 'hint', positions: editableEmptyCells, digit, enabled })
+}
+
+function enterDigit(digit: number, requestedMode: NumericEntryMode): void {
+  const mode = resolveNumericEntryMode(requestedMode, selection.selectedPositions.value.length)
+  if (mode === 'hint') enterHint(digit)
+  else {
+    enterValue(digit)
+    highlightedValue.value = digit
+  }
+}
+
+function enterFromPad(digit: number): void {
+  enterDigit(digit, hintMode.value ? 'hint' : 'value')
 }
 
 function undoMove(): void {
+  clearCheckResult()
   session.value = updateCompletion(undoGameMove(session.value, Date.now()))
   persist()
 }
 
 function redoMove(): void {
+  clearCheckResult()
   session.value = updateCompletion(redoGameMove(session.value, Date.now()))
   persist()
 }
 
 function resetPuzzle(): void {
   session.value = resetGame(session.value)
-  selection.clear()
+  resetInteraction()
+  clearCheckResult()
   clearSuguruProgress(localStorage, props.seed)
+}
+
+function clearCheckResult(): void {
+  checkPerformed.value = false
+  incorrectEntryKeys.value = new Set()
+}
+
+function checkBoard(): void {
+  const answer = solution.value
+  if (answer === null) return
+  incorrectEntryKeys.value = positionKeySet(findIncorrectFilledPositions(
+    state.value.entries,
+    answer,
+    (value) => value !== null,
+    (value, expected) => value === expected,
+  ))
+  checkPerformed.value = true
+}
+
+function isIncorrect(row: number, col: number): boolean {
+  return incorrectEntryKeys.value.has(positionKey({ row, col }))
 }
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -128,22 +197,11 @@ function handleKeydown(event: KeyboardEvent): void {
     event.shiftKey ? redoMove() : undoMove()
     return
   }
-  const directions: Record<string, readonly [number, number]> = {
-    arrowup: [-1, 0], w: [-1, 0],
-    arrowright: [0, 1], d: [0, 1],
-    arrowdown: [1, 0], s: [1, 0],
-    arrowleft: [0, -1], a: [0, -1],
-  }
-  const direction = directions[event.key.toLowerCase()]
-  if (direction !== undefined) {
-    event.preventDefault()
-    selection.move(direction[0], direction[1])
-    return
-  }
+  if (handleMovement(event)) return
   const numericIntent = getNumericEntryIntent(event, 1, selectedMaximum.value)
   if (numericIntent !== null) {
     event.preventDefault()
-    enterValue(numericIntent.value)
+    enterDigit(numericIntent.value, numericIntent.mode)
     return
   }
   if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -162,10 +220,8 @@ function cellStyle(row: number, col: number): CSSProperties {
   const inner = '1px solid #aeb6c3'
   return {
     borderTop: row === 0 || regions[row - 1]?.[col] !== regionId ? edge : inner,
-    borderRight:
-      col === columnCount.value - 1 || regions[row]?.[col + 1] !== regionId ? edge : inner,
-    borderBottom:
-      row === rowCount.value - 1 || regions[row + 1]?.[col] !== regionId ? edge : inner,
+    borderRight: col === columnCount.value - 1 || regions[row]?.[col + 1] !== regionId ? edge : inner,
+    borderBottom: row === rowCount.value - 1 || regions[row + 1]?.[col] !== regionId ? edge : inner,
     borderLeft: col === 0 || regions[row]?.[col - 1] !== regionId ? edge : inner,
   }
 }
@@ -174,26 +230,38 @@ function isConflicting(row: number, col: number): boolean {
   return isSuguruCellConflicting(puzzle.value, state.value, { row, col })
 }
 
+function hasSelectedValue(row: number, col: number): boolean {
+  return selectedValue.value !== null && board.value.cells[row]?.[col] === selectedValue.value
+}
+
 function cellLabel(row: number, col: number): string {
   const value = board.value.cells[row]?.[col]
-  const regionId = puzzle.value.question.regions.cells[row]?.[col] as number
-  const maximum = regionSize(puzzle.value.question.regions, regionId)
-  return `Row ${row + 1}, column ${col + 1}, ${value ?? 'empty'}, region values 1 to ${maximum}`
+  if (value !== null && value !== undefined) {
+    return `Row ${row + 1}, column ${col + 1}, ${value}, region values 1 to ${maximumAt(row, col)}`
+  }
+  const hints = hintsAt({ row, col })
+  return `Row ${row + 1}, column ${col + 1}${hints.length > 0 ? `, hints ${hints.join(', ')}` : ', empty'}, region values 1 to ${maximumAt(row, col)}`
 }
 </script>
 
 <template>
-  <div class="suguru-game">
+  <div class="numeric-grid-game suguru-game">
     <p class="seed">Seed: <code>{{ seed }}</code></p>
     <p v-if="solved" class="solved" role="status">Completed — nice work!</p>
     <p v-else class="instructions">
       Fill each region with 1 through its size. Equal numbers cannot touch, including diagonally.
-      Move with arrows or WASD; conflicts are shown in red.
+      Click-drag, Ctrl/⌘, or Shift selects multiple cells. Shift + number adds hints.
     </p>
+    <p
+      v-if="checkPerformed"
+      class="board-check-message"
+      :class="incorrectEntryKeys.size === 0 ? 'correct' : 'incorrect-message'"
+      role="status"
+    >{{ checkMessage }}</p>
 
     <div
       ref="boardElement"
-      class="suguru-board"
+      class="numeric-grid-board suguru-board"
       role="grid"
       aria-label="Suguru board"
       tabindex="0"
@@ -203,6 +271,9 @@ function cellLabel(row: number, col: number): string {
         aspectRatio: `${columnCount} / ${rowCount}`,
       }"
       @keydown="handleKeydown"
+      @pointerup="stopPointerSelection"
+      @pointercancel="stopPointerSelection"
+      @pointerleave="stopPointerSelection"
     >
       <button
         v-for="(_, index) in rowCount * columnCount"
@@ -210,38 +281,64 @@ function cellLabel(row: number, col: number): string {
         type="button"
         role="gridcell"
         tabindex="-1"
-        class="suguru-cell"
+        class="numeric-grid-cell suguru-cell"
         :class="{
           given: isGiven(Math.floor(index / columnCount), index % columnCount),
-          entered: !isGiven(Math.floor(index / columnCount), index % columnCount),
+          entered: !isGiven(Math.floor(index / columnCount), index % columnCount) && board.cells[Math.floor(index / columnCount)]?.[index % columnCount] !== null,
           selected: selection.isSelected({ row: Math.floor(index / columnCount), col: index % columnCount }),
+          active: selection.activePosition.value?.row === Math.floor(index / columnCount) && selection.activePosition.value?.col === index % columnCount,
+          'same-value': hasSelectedValue(Math.floor(index / columnCount), index % columnCount),
+          'hint-matching': cellContainsHighlightedHint({ row: Math.floor(index / columnCount), col: index % columnCount }),
           conflict: isConflicting(Math.floor(index / columnCount), index % columnCount),
+          incorrect: isIncorrect(Math.floor(index / columnCount), index % columnCount),
         }"
         :style="cellStyle(Math.floor(index / columnCount), index % columnCount)"
         :aria-label="cellLabel(Math.floor(index / columnCount), index % columnCount)"
         :aria-selected="selection.isSelected({ row: Math.floor(index / columnCount), col: index % columnCount })"
-        @click="selectCell(Math.floor(index / columnCount), index % columnCount)"
+        @pointerdown="startCellSelection(Math.floor(index / columnCount), index % columnCount, $event)"
+        @pointerenter="extendPointerSelection({ row: Math.floor(index / columnCount), col: index % columnCount }, $event)"
+        @dragstart.prevent
+        @dblclick.stop.prevent="selectMatchingFullNumbers({ row: Math.floor(index / columnCount), col: index % columnCount })"
       >
-        {{ board.cells[Math.floor(index / columnCount)]?.[index % columnCount] ?? '' }}
+        <span v-if="board.cells[Math.floor(index / columnCount)]?.[index % columnCount]" class="cell-value">
+          {{ board.cells[Math.floor(index / columnCount)]?.[index % columnCount] }}
+        </span>
+        <span v-else class="cell-hints" aria-hidden="true">
+          <span
+            v-for="digit in maximumAt(Math.floor(index / columnCount), index % columnCount)"
+            :key="digit"
+            :class="{
+              visible: hintsAt({ row: Math.floor(index / columnCount), col: index % columnCount }).includes(digit),
+              highlighted: selectedValue === digit && hintsAt({ row: Math.floor(index / columnCount), col: index % columnCount }).includes(digit),
+            }"
+          >
+            {{ hintsAt({ row: Math.floor(index / columnCount), col: index % columnCount }).includes(digit) ? digit : '' }}
+          </span>
+        </span>
       </button>
     </div>
 
     <div class="number-pad" aria-label="Number controls">
       <template v-if="selectedMaximum > 0">
-        <button
-          v-for="value in selectedMaximum"
-          :key="value"
-          type="button"
-          @click="enterValue(value)"
-        >{{ value }}</button>
+        <button v-for="value in selectedMaximum" :key="value" type="button" @click="enterFromPad(value)">
+          {{ value }}
+        </button>
       </template>
       <span v-else class="select-prompt">Select a cell to see its region's values.</span>
+      <button
+        type="button"
+        class="hint-toggle"
+        :class="{ active: hintMode }"
+        :aria-pressed="hintMode"
+        @click="hintMode = !hintMode"
+      >Hints</button>
       <button type="button" :disabled="selection.activePosition.value === null" @click="enterValue(null)">
         Clear
       </button>
     </div>
 
     <div class="game-actions">
+      <button type="button" @click="checkBoard">Check</button>
       <button type="button" :disabled="!undoAvailable" @click="undoMove">Undo</button>
       <button type="button" :disabled="!redoAvailable" @click="redoMove">Redo</button>
       <button type="button" @click="resetPuzzle">Reset</button>
@@ -251,38 +348,12 @@ function cellLabel(row: number, col: number): string {
 
 <style scoped>
 .suguru-game { max-width: 34rem; }
-.seed, .instructions, .select-prompt { color: #68758a; }
-.solved { color: #23723c; font-weight: 700; }
-.suguru-board {
-  display: grid;
-  width: min(100%, 31rem);
-  outline-offset: 0.3rem;
-  user-select: none;
+.suguru-board { width: min(100%, 31rem); }
+.suguru-cell.same-value:not(.selected) {
+  background: #fff0ad;
+  box-shadow: inset 0 0 0 2px #e1b934;
 }
-.suguru-cell {
-  min-width: 0;
-  min-height: 0;
-  padding: 0;
-  border-radius: 0;
-  color: #315c9a;
-  background: #fff;
-  font: inherit;
-  font-size: clamp(1.1rem, 6vw, 1.8rem);
-  font-weight: 700;
-  cursor: pointer;
-}
-.suguru-cell.given { color: #172033; background: #f0f2f5; }
-.suguru-cell.selected { background: #dbe9ff; box-shadow: inset 0 0 0 3px #244f8d; z-index: 1; }
 .suguru-cell.conflict { color: #a52f2f; background: #ffe5e5; }
 .suguru-cell.selected.conflict { box-shadow: inset 0 0 0 3px #a52f2f; }
-.number-pad, .game-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; margin-top: 1rem; }
-.number-pad button, .game-actions button {
-  min-width: 2.5rem;
-  padding: 0.55rem 0.75rem;
-  border: 1px solid #b8c0cc;
-  border-radius: 0.35rem;
-  background: #fff;
-  cursor: pointer;
-}
-button:disabled { cursor: default; opacity: 0.55; }
+.suguru-cell.incorrect { color: #a52f2f; background: #ffe1e1; }
 </style>

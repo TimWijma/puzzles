@@ -9,8 +9,8 @@ import {
 import { mergeSuguruBoard } from './state'
 import type {
   SuguruBoard,
-  SuguruMove,
   SuguruPlayerState,
+  SuguruProposedMove,
   SuguruPuzzleInstance,
   SuguruSolution,
 } from './types'
@@ -143,7 +143,7 @@ export function isValidSuguruSolution(
 export function isLegalSuguruMove(
   instance: SuguruPuzzleInstance,
   state: SuguruPlayerState,
-  move: SuguruMove,
+  move: SuguruProposedMove,
 ): boolean {
   if (
     !isInBounds(instance.question.regions, move) ||

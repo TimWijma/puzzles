@@ -1,4 +1,10 @@
-import { createFilledGrid, getCell, isInBounds, setCell } from '../../core/grid'
+import type { Position } from '../../core/grid'
+import {
+  applyNumericGridMove,
+  createNumericGridState,
+  mergeNumericGrid,
+} from '../shared/numericGridState'
+import { cellsInRegion, regionSize, surroundingCells } from './regions'
 import type {
   SuguruBoard,
   SuguruMove,
@@ -8,7 +14,7 @@ import type {
 
 export function createInitialSuguruState(instance: SuguruPuzzleInstance): SuguruPlayerState {
   const { rowCount, columnCount } = instance.question.regions
-  return { entries: createFilledGrid(rowCount, columnCount, null) }
+  return createNumericGridState<number>(rowCount, columnCount)
 }
 
 export function applySuguruMove(
@@ -16,28 +22,32 @@ export function applySuguruMove(
   state: SuguruPlayerState,
   move: SuguruMove,
 ): SuguruPlayerState {
-  if (
-    !isInBounds(instance.question.regions, move) ||
-    getCell(instance.question.givens, move) !== null ||
-    (move.value !== null && (!Number.isInteger(move.value) || move.value < 1))
-  ) return state
-
-  if (getCell(state.entries, move) === move.value) return state
-  return { entries: setCell(state.entries, move, move.value) }
+  const { regions, givens } = instance.question
+  const isValueAllowed = (value: number, position: Position): value is number => {
+    const regionId = regions.cells[position.row]?.[position.col]
+    return (
+      regionId !== undefined &&
+      Number.isInteger(value) &&
+      value >= 1 &&
+      value <= regionSize(regions, regionId)
+    )
+  }
+  const peers = (position: Position): Position[] => {
+    const regionId = regions.cells[position.row]?.[position.col]
+    if (regionId === undefined) return []
+    const byKey = new Map<string, Position>()
+    for (const peer of [...cellsInRegion(regions, regionId), ...surroundingCells(regions, position)]) {
+      if (peer.row === position.row && peer.col === position.col) continue
+      byKey.set(`${peer.row}:${peer.col}`, peer)
+    }
+    return [...byKey.values()]
+  }
+  return applyNumericGridMove(state, move, { givens, isValueAllowed, peers })
 }
 
 export function mergeSuguruBoard(
   instance: SuguruPuzzleInstance,
   state: SuguruPlayerState,
 ): SuguruBoard {
-  const { rowCount, columnCount } = instance.question.regions
-  return {
-    rowCount,
-    columnCount,
-    cells: Array.from({ length: rowCount }, (_, row) =>
-      Array.from({ length: columnCount }, (_, col) =>
-        instance.question.givens.cells[row]?.[col] ?? state.entries.cells[row]?.[col] ?? null,
-      ),
-    ),
-  }
+  return mergeNumericGrid(instance.question.givens, state.entries)
 }

@@ -1,5 +1,10 @@
 import type { Grid, Position } from '../../core/grid'
 import type { Difficulty, PuzzleInstance } from '../../core/puzzle'
+import type {
+  NumericGridHintMove,
+  NumericGridPlayerState,
+  NumericGridValueMove,
+} from '../shared/numericGridState'
 
 export type SudokuDigit = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 export type SudokuCell = SudokuDigit | null
@@ -22,28 +27,15 @@ export interface SudokuPuzzleInstance
   readonly puzzleType: 'sudoku'
 }
 
-export interface SudokuPlayerState {
-  /** Player-entered values only. Given cells always remain null here. */
-  readonly entries: SudokuBoard
-  readonly hints: SudokuHintGrid
-}
+export interface SudokuPlayerState extends NumericGridPlayerState<SudokuDigit> {}
 
 export interface SudokuProposedMove extends Position {
   readonly value: SudokuCell
 }
 
-export interface SudokuValueMove {
-  readonly kind: 'value'
-  readonly positions: readonly Position[]
-  readonly value: SudokuCell
-}
+export type SudokuValueMove = NumericGridValueMove<SudokuDigit>
 
-export interface SudokuHintMove {
-  readonly kind: 'hint'
-  readonly positions: readonly Position[]
-  readonly digit: SudokuDigit
-  readonly enabled: boolean
-}
+export type SudokuHintMove = NumericGridHintMove<SudokuDigit>
 
 export type SudokuMove = SudokuValueMove | SudokuHintMove
 

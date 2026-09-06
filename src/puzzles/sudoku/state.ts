@@ -1,7 +1,11 @@
-import { createFilledGrid, getCell, isInBounds, setCell } from '../../core/grid'
+import type { Position } from '../../core/grid'
+import {
+  applyNumericGridMove,
+  createNumericGridState,
+  mergeNumericGrid,
+} from '../shared/numericGridState'
 import type {
   SudokuBoard,
-  SudokuCell,
   SudokuDigit,
   SudokuMove,
   SudokuPlayerState,
@@ -17,10 +21,23 @@ export function isSudokuDigit(value: unknown): value is SudokuDigit {
 export function createInitialSudokuState(
   _instance?: SudokuPuzzleInstance,
 ): SudokuPlayerState {
-  return {
-    entries: createFilledGrid(SUDOKU_SIZE, SUDOKU_SIZE, null),
-    hints: createFilledGrid<readonly SudokuDigit[]>(SUDOKU_SIZE, SUDOKU_SIZE, []),
+  return createNumericGridState<SudokuDigit>(SUDOKU_SIZE, SUDOKU_SIZE)
+}
+
+function sudokuPeers(position: Position): Position[] {
+  const peers: Position[] = []
+  for (let row = 0; row < SUDOKU_SIZE; row += 1) {
+    for (let col = 0; col < SUDOKU_SIZE; col += 1) {
+      if (row === position.row && col === position.col) continue
+      if (
+        row === position.row ||
+        col === position.col ||
+        (Math.floor(row / 3) === Math.floor(position.row / 3) &&
+          Math.floor(col / 3) === Math.floor(position.col / 3))
+      ) peers.push({ row, col })
+    }
   }
+  return peers
 }
 
 export function applySudokuMove(
@@ -28,80 +45,16 @@ export function applySudokuMove(
   state: SudokuPlayerState,
   move: SudokuMove,
 ): SudokuPlayerState {
-  let entries = state.entries
-  let hints = state.hints
-  let changed = false
-  const seen = new Set<string>()
-
-  for (const position of move.positions) {
-    const key = `${position.row}:${position.col}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    if (
-      !isInBounds(instance.question.givens, position) ||
-      getCell(instance.question.givens, position) !== null
-    ) {
-      continue
-    }
-
-    if (move.kind === 'value') {
-      if (move.value !== null && !isSudokuDigit(move.value)) continue
-      if (getCell(entries, position) !== move.value) {
-        entries = setCell(entries, position, move.value)
-        changed = true
-      }
-      if ((getCell(hints, position)?.length ?? 0) > 0) {
-        hints = setCell(hints, position, [])
-        changed = true
-      }
-      if (move.value !== null) {
-        for (let row = 0; row < SUDOKU_SIZE; row += 1) {
-          for (let col = 0; col < SUDOKU_SIZE; col += 1) {
-            const isPeer =
-              row === position.row ||
-              col === position.col ||
-              (Math.floor(row / 3) === Math.floor(position.row / 3) &&
-                Math.floor(col / 3) === Math.floor(position.col / 3))
-            if (!isPeer) continue
-            const peer = { row, col }
-            const peerHints = getCell(hints, peer) ?? []
-            if (!peerHints.includes(move.value)) continue
-            hints = setCell(hints, peer, peerHints.filter((digit) => digit !== move.value))
-            changed = true
-          }
-        }
-      }
-      continue
-    }
-
-    if (!isSudokuDigit(move.digit) || getCell(entries, position) !== null) continue
-    const currentHints = getCell(hints, position) ?? []
-    const nextHints = move.enabled
-      ? [...new Set([...currentHints, move.digit])].sort((left, right) => left - right)
-      : currentHints.filter((digit) => digit !== move.digit)
-    if (nextHints.length !== currentHints.length) {
-      hints = setCell(hints, position, nextHints)
-      changed = true
-    }
-  }
-
-  return changed ? { entries, hints } : state
+  return applyNumericGridMove(state, move, {
+    givens: instance.question.givens,
+    isValueAllowed: isSudokuDigit,
+    peers: sudokuPeers,
+  })
 }
 
 export function mergeSudokuBoard(
   instance: SudokuPuzzleInstance,
   state: SudokuPlayerState,
 ): SudokuBoard {
-  const cells: SudokuCell[][] = []
-
-  for (let row = 0; row < SUDOKU_SIZE; row += 1) {
-    const mergedRow: SudokuCell[] = []
-    for (let col = 0; col < SUDOKU_SIZE; col += 1) {
-      const given = instance.question.givens.cells[row]?.[col] ?? null
-      mergedRow.push(given ?? state.entries.cells[row]?.[col] ?? null)
-    }
-    cells.push(mergedRow)
-  }
-
-  return { rowCount: SUDOKU_SIZE, columnCount: SUDOKU_SIZE, cells }
+  return mergeNumericGrid(instance.question.givens, state.entries)
 }

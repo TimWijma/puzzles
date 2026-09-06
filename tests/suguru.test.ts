@@ -81,6 +81,10 @@ function instance(givens = board([
   }
 }
 
+function valueMove(row: number, col: number, value: number | null): SuguruMove {
+  return { kind: 'value', positions: [{ row, col }], value }
+}
+
 describe('Suguru regions', () => {
   it('assigns every cell to exactly one valid region', () => {
     const layout = regions()
@@ -163,7 +167,7 @@ describe('Suguru validator', () => {
     expect(isLegalSuguruMove(puzzle, initial, { row: 3, col: 3, value: 2 })).toBe(true)
     expect(isLegalSuguruMove(puzzle, initial, { row: 3, col: 3, value: 1 })).toBe(false)
     expect(isLegalSuguruMove(puzzle, initial, { row: 0, col: 0, value: 2 })).toBe(false)
-    const solved = applySuguruMove(puzzle, initial, { row: 3, col: 3, value: 2 })
+    const solved = applySuguruMove(puzzle, initial, valueMove(3, 3, 2))
     expect(isSuguruSolved(puzzle, solved)).toBe(true)
     expect(isValidSuguruSolution(puzzle, grid(solutionCells) as SuguruSolution)).toBe(true)
 
@@ -172,6 +176,7 @@ describe('Suguru validator', () => {
         [2, null, null, null], [null, null, null, null],
         [null, null, null, null], [null, null, null, null],
       ]) as SuguruBoard,
+      hints: createInitialSuguruState(puzzle).hints,
     }
     expect(validateSuguru(puzzle, modifiedGiven).issues.some((issue) => issue.code === 'modified-given')).toBe(true)
   })
@@ -245,26 +250,58 @@ describe('Suguru state with generic history', () => {
 
   it('enters, replaces, and clears values while protecting givens', () => {
     const initial = createInitialSuguruState(puzzle)
-    const entered = applySuguruMove(puzzle, initial, { row: 3, col: 3, value: 2 })
-    const replaced = applySuguruMove(puzzle, entered, { row: 3, col: 3, value: 3 })
-    const cleared = applySuguruMove(puzzle, replaced, { row: 3, col: 3, value: null })
+    const entered = applySuguruMove(puzzle, initial, valueMove(3, 3, 2))
+    const replaced = applySuguruMove(puzzle, entered, valueMove(3, 3, 3))
+    const cleared = applySuguruMove(puzzle, replaced, valueMove(3, 3, null))
     expect(entered.entries.cells[3]?.[3]).toBe(2)
     expect(replaced.entries.cells[3]?.[3]).toBe(3)
     expect(cleared.entries.cells[3]?.[3]).toBeNull()
-    expect(applySuguruMove(puzzle, initial, { row: 0, col: 0, value: 2 })).toBe(initial)
+    expect(applySuguruMove(puzzle, initial, valueMove(0, 0, 2))).toBe(initial)
     expect(mergeSuguruBoard(puzzle, entered).cells[0]?.[0]).toBe(1)
   })
 
   it('supports undo, redo, and reset through generic history', () => {
     const initial = createInitialSuguruState(puzzle)
     let history = createMoveHistory<ReturnType<typeof createInitialSuguruState>, SuguruMove>(initial)
-    history = applyMove(history, { row: 3, col: 3, value: 2 }, reduce)
+    history = applyMove(history, valueMove(3, 3, 2), reduce)
     history = undo(history)
     expect(history.currentState.entries.cells[3]?.[3]).toBeNull()
     history = redo(history)
     expect(history.currentState.entries.cells[3]?.[3]).toBe(2)
     history = resetHistory(history)
     expect(history.currentState).toBe(initial)
+  })
+
+  it('applies hints to multiple cells as one move', () => {
+    const emptyPuzzle = instance(board(Array.from({ length: 4 }, () => Array(4).fill(null))))
+    const initial = createInitialSuguruState(emptyPuzzle)
+    const positions = [{ row: 0, col: 0 }, { row: 2, col: 2 }]
+    const hinted = applySuguruMove(emptyPuzzle, initial, {
+      kind: 'hint', positions, digit: 2, enabled: true,
+    })
+    expect(hinted.hints.cells[0]?.[0]).toEqual([2])
+    expect(hinted.hints.cells[2]?.[2]).toEqual([2])
+
+    const unhinted = applySuguruMove(emptyPuzzle, hinted, {
+      kind: 'hint', positions, digit: 2, enabled: false,
+    })
+    expect(unhinted.hints.cells[0]?.[0]).toEqual([])
+    expect(unhinted.hints.cells[2]?.[2]).toEqual([])
+  })
+
+  it('clears hints from a filled cell and its Suguru peers', () => {
+    const emptyPuzzle = instance(board(Array.from({ length: 4 }, () => Array(4).fill(null))))
+    const initial = createInitialSuguruState(emptyPuzzle)
+    const hinted = applySuguruMove(emptyPuzzle, initial, {
+      kind: 'hint',
+      positions: [{ row: 0, col: 0 }, { row: 0, col: 1 }, { row: 2, col: 2 }],
+      digit: 2,
+      enabled: true,
+    })
+    const entered = applySuguruMove(emptyPuzzle, hinted, valueMove(0, 0, 2))
+    expect(entered.hints.cells[0]?.[0]).toEqual([])
+    expect(entered.hints.cells[0]?.[1]).toEqual([])
+    expect(entered.hints.cells[2]?.[2]).toEqual([2])
   })
 })
 
@@ -276,16 +313,30 @@ class MemoryStorage implements StorageLike {
 }
 
 describe('Suguru persistence', () => {
-  it('stores progress by type and seed, restores it, and clears it', () => {
+  it('stores entries and hints by type and seed, restores them, and clears them', () => {
     const storage = new MemoryStorage()
-    const puzzle = instance()
-    const state = applySuguruMove(
-      puzzle, createInitialSuguruState(puzzle), { row: 3, col: 3, value: 2 },
+    const puzzle = instance(board(Array.from({ length: 4 }, () => Array(4).fill(null))))
+    const entered = applySuguruMove(
+      puzzle, createInitialSuguruState(puzzle), valueMove(0, 0, 2),
     )
+    const state = applySuguruMove(puzzle, entered, {
+      kind: 'hint', positions: [{ row: 2, col: 2 }], digit: 1, enabled: true,
+    })
     saveSuguruProgress(storage, 'abc123', state, true)
     expect(suguruProgressKey('abc123')).toBe('puzzle:suguru:abc123')
     expect(loadSuguruProgress(storage, 'abc123', puzzle)?.state).toEqual(state)
     clearSuguruProgress(storage, 'abc123')
     expect(loadSuguruProgress(storage, 'abc123', puzzle)).toBeNull()
+  })
+
+  it('migrates version-one progress with an empty hint grid', () => {
+    const storage = new MemoryStorage()
+    const puzzle = instance()
+    storage.setItem(suguruProgressKey('legacy'), JSON.stringify({
+      version: 1,
+      entries: createInitialSuguruState(puzzle).entries.cells,
+      completed: false,
+    }))
+    expect(loadSuguruProgress(storage, 'legacy', puzzle)?.state.hints.cells.flat().flat()).toEqual([])
   })
 })

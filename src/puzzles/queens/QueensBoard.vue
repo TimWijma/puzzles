@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef, watch, type CSSProperties } from 'vue'
+import { computed, ref, shallowRef, watch, type CSSProperties } from 'vue'
 import {
   applyGameMove,
   canRedo,
@@ -11,6 +11,11 @@ import {
   undoGameMove,
   type GameSession,
 } from '../../core/game'
+import {
+  findIncorrectFilledPositions,
+  positionKey,
+  positionKeySet,
+} from '../shared/boardCheck'
 import { generateQueens } from './generator'
 import {
   clearQueensProgress,
@@ -18,12 +23,15 @@ import {
   saveQueensProgress,
 } from './persistence'
 import { applyQueensMove, createInitialQueensState } from './state'
+import { solve as solveQueens } from './solver'
 import type { QueensMove, QueensPlayerState } from './types'
 import { isLegalQueenPlacement, isQueensSolved } from './validator'
 
 const props = defineProps<{ seed: string }>()
 const puzzle = computed(() => generateQueens({ seed: props.seed }))
 const invalidCell = shallowRef<{ row: number; col: number } | null>(null)
+const checkPerformed = ref(false)
+const incorrectQueenKeys = shallowRef<ReadonlySet<string>>(new Set())
 
 function createSession(): GameSession<QueensPlayerState, QueensMove> {
   const initialState = createInitialQueensState(puzzle.value)
@@ -39,15 +47,24 @@ function createSession(): GameSession<QueensPlayerState, QueensMove> {
 
 const session = shallowRef(createSession())
 const state = computed(() => session.value.history.currentState)
+const solution = computed(() => solveQueens(puzzle.value))
 const size = computed(() => puzzle.value.question.regions.rowCount)
 const solved = computed(() => session.value.completion === 'completed')
 const undoAvailable = computed(() => canUndo(session.value.history))
 const redoAvailable = computed(() => canRedo(session.value.history))
+const checkMessage = computed(() => {
+  if (!checkPerformed.value) return ''
+  const count = incorrectQueenKeys.value.size
+  return count === 0
+    ? 'Every queen placed so far is correct.'
+    : `${count} ${count === 1 ? 'queen is' : 'queens are'} incorrectly placed.`
+})
 
 watch(
   () => props.seed,
   () => {
     invalidCell.value = null
+    clearCheckResult()
     session.value = createSession()
   },
 )
@@ -63,6 +80,7 @@ function updateCompletion(next: GameSession<QueensPlayerState, QueensMove>): Gam
 }
 
 function commit(move: QueensMove): void {
+  clearCheckResult()
   session.value = updateCompletion(
     applyGameMove(
       session.value,
@@ -77,6 +95,7 @@ function commit(move: QueensMove): void {
 function toggleQueen(row: number, col: number): void {
   if (solved.value) return
   invalidCell.value = null
+  clearCheckResult()
   if (state.value.queens.cells[row]?.[col]) {
     commit({ row, col, value: false })
     return
@@ -90,12 +109,14 @@ function toggleQueen(row: number, col: number): void {
 
 function undoMove(): void {
   invalidCell.value = null
+  clearCheckResult()
   session.value = updateCompletion(undoGameMove(session.value, Date.now()))
   persist()
 }
 
 function redoMove(): void {
   invalidCell.value = null
+  clearCheckResult()
   session.value = updateCompletion(redoGameMove(session.value, Date.now()))
   persist()
 }
@@ -103,7 +124,29 @@ function redoMove(): void {
 function resetPuzzle(): void {
   session.value = resetGame(session.value)
   invalidCell.value = null
+  clearCheckResult()
   clearQueensProgress(localStorage, props.seed)
+}
+
+function clearCheckResult(): void {
+  checkPerformed.value = false
+  incorrectQueenKeys.value = new Set()
+}
+
+function checkBoard(): void {
+  const answer = solution.value
+  if (answer === null) return
+  incorrectQueenKeys.value = positionKeySet(findIncorrectFilledPositions(
+    state.value.queens,
+    answer.queens,
+    (value) => value,
+    (value, expected) => value === expected,
+  ))
+  checkPerformed.value = true
+}
+
+function isIncorrectQueen(row: number, col: number): boolean {
+  return incorrectQueenKeys.value.has(positionKey({ row, col }))
 }
 
 function regionColor(regionId: number): string {
@@ -136,6 +179,12 @@ function cellStyle(row: number, col: number): CSSProperties {
     <p v-else class="instructions">
       Place one queen in every row, column, and colored region. Queens cannot touch diagonally.
     </p>
+    <p
+      v-if="checkPerformed"
+      class="board-check-message"
+      :class="incorrectQueenKeys.size === 0 ? 'correct' : 'incorrect-message'"
+      role="status"
+    >{{ checkMessage }}</p>
 
     <div
       class="queens-board"
@@ -152,6 +201,7 @@ function cellStyle(row: number, col: number): CSSProperties {
         :class="{
           queen: state.queens.cells[Math.floor(index / size)]?.[index % size],
           invalid: invalidCell?.row === Math.floor(index / size) && invalidCell?.col === index % size,
+          'incorrect-queen': isIncorrectQueen(Math.floor(index / size), index % size),
         }"
         :style="cellStyle(Math.floor(index / size), index % size)"
         :aria-label="`Row ${Math.floor(index / size) + 1}, column ${index % size + 1}${state.queens.cells[Math.floor(index / size)]?.[index % size] ? ', queen' : ''}`"
@@ -163,6 +213,7 @@ function cellStyle(row: number, col: number): CSSProperties {
     </div>
 
     <div class="game-actions">
+      <button type="button" @click="checkBoard">Check</button>
       <button type="button" :disabled="!undoAvailable" @click="undoMove">Undo</button>
       <button type="button" :disabled="!redoAvailable" @click="redoMove">Redo</button>
       <button type="button" @click="resetPuzzle">Reset</button>
@@ -175,6 +226,8 @@ function cellStyle(row: number, col: number): CSSProperties {
 .seed, .instructions { color: #68758a; }
 .solved { color: #23723c; font-weight: 700; }
 .invalid-message { color: #a52f2f; font-weight: 600; }
+.board-check-message.correct { color: #23723c; font-weight: 700; }
+.board-check-message.incorrect-message { color: #a52f2f; font-weight: 700; }
 .queens-board {
   display: grid;
   width: min(100%, 31.5rem);
@@ -192,6 +245,7 @@ function cellStyle(row: number, col: number): CSSProperties {
 }
 .queens-cell.queen { text-shadow: 0 1px 0 #fff; }
 .queens-cell.invalid { box-shadow: inset 0 0 0 3px #c23a3a; }
+.queens-cell.incorrect-queen { color: #a52f2f; box-shadow: inset 0 0 0 3px #c23a3a; }
 .game-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 1rem; }
 .game-actions button {
   min-width: 4rem;
@@ -203,4 +257,3 @@ function cellStyle(row: number, col: number): CSSProperties {
 }
 button:disabled { cursor: default; opacity: 0.55; }
 </style>
-

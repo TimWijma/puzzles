@@ -17,8 +17,9 @@ after real puzzle modules expose shared needs.
 - `src/core/random` supplies a dependency-free deterministic random source from an arbitrary
   string seed, with integer, boolean, selection, and non-mutating shuffle helpers.
 - `src/puzzles` owns the puzzle registry and application-level board component lookup.
-  Its `shared/gridInput.ts` helper contains reusable grid selection and numeric value/hint input
-  intents for keyboard-driven puzzle boards without coupling those UI concepts to `core`.
+  Its `shared` folder contains composable numeric-grid state, selection, value/hint input,
+  matching-number interactions, and common board styling. Each puzzle supplies its own value
+  ranges, peer relationships, boundaries, and validation without coupling UI concepts to `core`.
 
 Puzzle-specific rules belong under `src/puzzles/<puzzle-name>`. Core code must never branch on a
 puzzle ID or contain logic such as Sudoku validation or Sea Battle ship detection. Keeping those
@@ -73,3 +74,5 @@ src/puzzles/<puzzle-name>/
 5. Add routing or catalogue metadata without changing generic core behaviour.
 
 UI concepts should be shared only after at least two puzzle boards demonstrate the same need.
+Sudoku and Suguru both compose the numeric-grid helpers; future puzzles such as Kakuro can reuse
+only those pieces that match their cells instead of opting into a monolithic feature list.
